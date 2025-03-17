@@ -1,44 +1,16 @@
 <script setup lang="ts">
 import { useGLTF } from '@tresjs/cientos';
-import { useTexture } from '@tresjs/core';
+import { useTexture, useTresContext } from '@tresjs/core';
 import * as THREE from 'three';
 import { onMounted, ref, watch, shallowRef, computed, ComputedRef } from 'vue';
-import type { Shelf, Box } from '../interfaces/shelf.interface';
-import { shelfNumber } from "../stores/shelfNumber"
-import cursorStyle from "../stores/cursorStyle"
+import type { Shelf, Box, BeamGeometry, Models, SceneData, WallGeometry } from '../interfaces/types';
+import { shelfNumber } from "../stores/shelfNumber";
+import cursorStyle from "../stores/cursorStyle";
+import { useModelInteraction } from "../composables/useModelTouch";
 import anime from 'animejs';
-
-// Define types
-interface BeamGeometry {
-    position: [number, number, number];
-    width: number;
-    height: number;
-    depth: number;
-}
-
-interface WallGeometry {
-    position: [number, number, number];
-    rotation: [number, number, number];
-    width: number;
-    height: number;
-}
-
-interface SceneData {
-    textures: {
-        wall: THREE.Texture;
-        floor: THREE.Texture;
-        ceiling: THREE.Texture;
-        beam: THREE.Texture;
-    };
-    wallGeometries: WallGeometry[];
-    beamGeometries: BeamGeometry[];
-    shelves: Shelf[];
-}
-
-interface Models {
-    shelves: Record<string, THREE.Object3D>,
-    // box: THREE.Scene
-}
+import selectedBox from '../stores/selectedBox';
+import showModal from '../stores/modalStatus';
+import { useIndexedDB } from "../composables/useIndexedDB";
 
 // Room configuration
 const ROOM_CONFIG = {
@@ -48,10 +20,9 @@ const ROOM_CONFIG = {
     numBeams: 6
 };
 
-
 defineExpose({
     cursorStyle
-})
+});
 
 // Scene refs - Use shallowRef for Three.js objects to prevent deep reactivity
 const warehouseGroup = shallowRef<THREE.Group | null>(null);
@@ -61,26 +32,22 @@ const loadModels = async (): Promise<Models> => {
     const shelves: Record<string, THREE.Object3D> = {};
     // load shelf models
     for (let i = 1; i <= 4; i++) {
-        const { scene } = await useGLTF('/metal_shelf_-_5mb.glb', { draco: true });
+        const { scene } = await useGLTF('/metal_shelf_-_5mb2.glb', { draco: true });
         shelves[`shelf${i}`] = scene.clone(); // Clone to ensure unique instances
     }
 
-    // // load box model
-    // const { scene: box } = await useGLTF('/beautiful_and_free_basic_cardboard_box_1m_size.glb', { draco: true });
-
     return {
         shelves,
-        // box
     };
 };
 
 // Load textures
 const loadTextures = async () => {
     const [wall, floor, ceiling, beam] = await useTexture([
-        '/empty-red-brick-wall (1).jpg',
+        '/empty-red-brick-wall.jpg',
         '/Floor_baseColor.jpg',
         '/Ceiling_baseColor.jpg',
-        '/vecteezy_concrete-wall-texture_1819580 (1).jpg'
+        '/vecteezy_concrete-wall-texture_1819580.jpg'
     ]);
 
     return { wall, floor, ceiling, beam };
@@ -137,64 +104,68 @@ const createBeamGeometries = (): BeamGeometry[] => {
     return beams;
 };
 
+const { makeModelInteractive } = useModelInteraction();
+
+// Create a bordered box model
+const borderedBoxModel = async (box: THREE.Scene): Promise<THREE.Scene> => {
+    box.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+            // Create a wireframe outline using EdgesGeometry
+            const edgesGeometry = new THREE.EdgesGeometry(child.geometry, 15); // 15 degrees threshold
+            const wireframe = new THREE.LineSegments(
+                edgesGeometry,
+                new THREE.LineBasicMaterial({
+                    color: 0xffffff, // White border
+                    linewidth: 2,
+                    transparent: true,
+                    opacity: 1
+                })
+            );
+
+            // Ensure the wireframe is slightly larger than the original mesh
+            wireframe.scale.multiplyScalar(1.06);
+
+            // Use the same transformation as the parent mesh
+            wireframe.position.copy(child.position);
+            wireframe.quaternion.copy(child.quaternion);
+            wireframe.scale.copy(child.scale);
+            wireframe.scale.multiplyScalar(1.01); // Make slightly larger
+
+            // Add the wireframe as a sibling to ensure it renders independently
+            if (child.parent) {
+                child.parent.add(wireframe);
+            } else {
+                box.add(wireframe);
+            }
+        }
+    });
+
+    return box;
+};
+
+// Create a boxes structure with only one box in first row
+const createInitialBoxesStructure = async (rows: number, shelfId: number): Promise<Box[][]> => {
+    const boxes: Box[][] = [];
+
+    const { scene: box } = await useGLTF('/beautiful_and_free_basic_cardboard_box_1m_size.glb', { draco: true });
+
+    makeModelInteractive(box, shelfId.toString(), (_, id) => {
+        addBox(+id);
+    });
+
+    // First row with one box
+    boxes.push([{ id: 0, content: [], model: await borderedBoxModel(box), isAddBox: true }]);
+
+    // Remaining rows are empty arrays (no boxes yet)
+    for (let i = 1; i < rows; i++) {
+        boxes.push([]);
+    }
+
+    return boxes;
+};
+
 // Update your createShelfConfigurations function with the correct boxes structure
 const createShelfConfigurations = async (models: Record<string, THREE.Object3D>): Promise<Shelf[]> => {
-    // Function to create a boxes structure with only one box in first row
-    const createInitialBoxesStructure = async (rows: number): Promise<Box[][]> => {
-
-        const borderedBoxModel = async (box: THREE.Scene): Promise<THREE.Scene> => {
-            box.traverse((child) => {
-                if (child instanceof THREE.Mesh) {
-                    // Create a wireframe outline using EdgesGeometry
-                    const edgesGeometry = new THREE.EdgesGeometry(child.geometry, 15); // 15 degrees threshold
-                    const wireframe = new THREE.LineSegments(
-                        edgesGeometry,
-                        new THREE.LineBasicMaterial({
-                            color: 0xffffff, // White border
-                            linewidth: 2,
-                            transparent: true,
-                            opacity: 1
-                        })
-                    );
-
-                    // Ensure the wireframe is slightly larger than the original mesh
-                    wireframe.scale.multiplyScalar(1.06);
-
-                    // Use the same transformation as the parent mesh
-                    wireframe.position.copy(child.position);
-                    wireframe.quaternion.copy(child.quaternion);
-                    wireframe.scale.copy(child.scale);
-                    wireframe.scale.multiplyScalar(1.01); // Make slightly larger
-
-                    // Add the wireframe as a sibling to ensure it renders independently
-                    if (child.parent) {
-                        child.parent.add(wireframe);
-                    } else {
-                        box.add(wireframe);
-                    }
-                }
-            });
-
-            return box;
-        }
-
-        const boxes: Box[][] = [];
-
-        const { scene: box } = await useGLTF('/beautiful_and_free_basic_cardboard_box_1m_size.glb', { draco: true });
-
-        // First row with one box
-        boxes.push([{ content: "", model: await borderedBoxModel(box) }]);
-
-
-        // Remaining rows are empty arrays (no boxes yet)
-        for (let i = 1; i < rows; i++) {
-
-            boxes.push([]);
-        }
-
-        return boxes;
-    };
-
     return [
         {
             model: (() => {
@@ -203,7 +174,7 @@ const createShelfConfigurations = async (models: Record<string, THREE.Object3D>)
                 return scene;
             })(),
             positions: { x: 30, y: -15, z: -21.5 },
-            boxes: await createInitialBoxesStructure(5) // 4 rows, only first row has a box
+            boxes: await createInitialBoxesStructure(5, 0) // 5 rows, only first row has a box
         },
         {
             model: (() => {
@@ -212,7 +183,7 @@ const createShelfConfigurations = async (models: Record<string, THREE.Object3D>)
                 return scene;
             })(),
             positions: { x: 10, y: -15, z: -21.5 },
-            boxes: await createInitialBoxesStructure(5)
+            boxes: await createInitialBoxesStructure(5, 1)
         },
         {
             model: (() => {
@@ -221,7 +192,7 @@ const createShelfConfigurations = async (models: Record<string, THREE.Object3D>)
                 return scene;
             })(),
             positions: { x: -10, y: -15, z: -21.5 },
-            boxes: await createInitialBoxesStructure(5)
+            boxes: await createInitialBoxesStructure(5, 2)
         },
         {
             model: (() => {
@@ -230,10 +201,27 @@ const createShelfConfigurations = async (models: Record<string, THREE.Object3D>)
                 return scene;
             })(),
             positions: { x: -30, y: -15, z: -21.5 },
-            boxes: await createInitialBoxesStructure(5)
+            boxes: await createInitialBoxesStructure(5, 3)
         }
     ];
 };
+
+const ShelfFloorIndex = computed(() => (number: number) => {
+    switch (number) {
+        case 0:
+            return 1.78;
+        case 1:
+            return 1.380;
+        case 2:
+            return 0.980;
+        case 3:
+            return 0.580;
+        case 4:
+            return 0.180;
+        default:
+            return 0;
+    }
+});
 
 // Configure texture
 const configureTexture = (texture: THREE.Texture, repeatX = 1, repeatY = 1) => {
@@ -241,6 +229,103 @@ const configureTexture = (texture: THREE.Texture, repeatX = 1, repeatY = 1) => {
     texture.repeat.set(repeatX, repeatY);
     texture.needsUpdate = true;
     return texture;
+};
+
+// Helper function to create a serializable representation of SceneData
+const createSerializableSceneData = (data: SceneData): any => {
+    return {
+        wallGeometries: data.wallGeometries,
+        beamGeometries: data.beamGeometries,
+        shelves: data.shelves.map(shelf => ({
+            positions: shelf.positions,
+            boxes: shelf.boxes.map((row, floorIndex) =>
+                row.map((box, boxIndex) => ({
+                    id: box.id,
+                    content: box.content,
+                    isAddBox: box.isAddBox,
+                    floorIndex,
+                    boxIndex
+                }))
+            )
+        }))
+    };
+};
+
+// Helper function to reconstruct SceneData from serializable format
+const reconstructSceneData = async (savedData: any): Promise<SceneData> => {
+    // Load required assets
+    const models = await loadModels();
+    const textures = await loadTextures();
+
+    // Configure textures
+    configureTexture(textures.floor, 5, 5);
+    configureTexture(textures.ceiling, 5, 5);
+    configureTexture(textures.wall, 1, 1);
+    configureTexture(textures.beam, 1, 10);
+
+    // Reconstruct shelves with their models and boxes
+    const shelves = await Promise.all(savedData.shelves.map(async (shelfData: any, index: number) => {
+        // Create shelf model
+        const shelfScene = new THREE.Scene();
+        shelfScene.add(models.shelves[`shelf${index + 1}`].clone());
+
+        // Create shelf with its model
+        const shelf: Shelf = {
+            model: shelfScene,
+            positions: shelfData.positions,
+            boxes: []
+        };
+
+        // Rebuild boxes for each floor
+        shelf.boxes = await Promise.all(shelfData.boxes.map(async (floorBoxes: any[]) => {
+            if (!floorBoxes.length) return [];
+
+            return Promise.all(floorBoxes.map(async (boxData) => {
+                const { scene: boxModel } = await useGLTF('/beautiful_and_free_basic_cardboard_box_1m_size.glb', { draco: true });
+
+                // Make the box interactive
+                if (boxData.isAddBox) {
+                    makeModelInteractive(boxModel, index.toString(), (_, id) => {
+                        addBox(+id);
+                    });
+                    return {
+                        id: boxData.id,
+                        content: boxData.content,
+                        model: await borderedBoxModel(boxModel),
+                        isAddBox: true
+                    };
+                } else {
+                    makeModelInteractive(boxModel, `${index}-${boxData.floorIndex}-${boxData.id}`, (_, id) => {
+                        showModal.value = true;
+                        const [shelf, floor, box] = id.split('-').map(Number);
+                        selectedBox.value = sceneData.value?.shelves[shelf].boxes[floor][box];
+                    });
+                    return {
+                        id: boxData.id,
+                        content: boxData.content,
+                        model: boxModel
+                    };
+                }
+            }));
+        }));
+
+        // Position shelf
+        shelfScene.position.set(
+            shelfData.positions.x,
+            shelfData.positions.y,
+            shelfData.positions.z
+        );
+        shelfScene.scale.set(10, 10, 10);
+
+        return shelf;
+    }));
+
+    return {
+        textures,
+        wallGeometries: savedData.wallGeometries || createWallGeometries(),
+        beamGeometries: savedData.beamGeometries || createBeamGeometries(),
+        shelves
+    };
 };
 
 // Initialization
@@ -290,20 +375,95 @@ const boxPosition = computed(() => (index: number) => {
     }
 });
 
-const addBox = () => {
-    console.log("hello")
+const shelfLoading = ref<boolean>(false);
+
+const addBox = async (shelfIndex: number) => {
+    shelfLoading.value = true
+    if (!sceneData.value) return -1
+
+    const currentFloorIndex = computed((): number => {
+        if (!sceneData.value) return -1
+
+        let floorNumber: number = 0;
+
+        sceneData.value.shelves[shelfIndex].boxes.some(floor => {
+            if (floor.length) {
+                console.log(floor[floor.length - 1].isAddBox ? 4 : 5);
+                if (floor.length < 4 || floor[floor.length - 1].isAddBox ) {
+                    return floorNumber
+                }
+                floorNumber++
+            }
+        })
+
+        return floorNumber
+    })
+
+    const { scene: box } = await useGLTF('/beautiful_and_free_basic_cardboard_box_1m_size.glb', { draco: true });
+
+    const floor: Box[] = sceneData.value.shelves[shelfIndex].boxes[currentFloorIndex.value]
+    const nextFloor: Box[] = sceneData.value.shelves[shelfIndex].boxes[currentFloorIndex.value + 1]
+
+    const currentBoxId: number = floor.length
+    
+    floor.unshift({
+        id: currentBoxId,
+        model: box,
+        content: []
+    })
+
+    makeModelInteractive(box, `${shelfIndex}-${currentFloorIndex.value}-${currentBoxId}`, (_, id) => {
+        showModal.value = true
+        const shelf: number = +id[0]
+        const floor: number = +id[2]
+        const box: number = +id[4]
+        console.log(sceneData.value?.shelves[shelf].boxes[floor][box]);
+        selectedBox.value = sceneData.value?.shelves[shelf].boxes[floor][box]
+    })
+
+    console.log(currentFloorIndex.value)
+
+    if (floor.length === 5 && currentFloorIndex.value !== 4 ) {
+
+        const elementToMove = floor.pop()
+
+        if (currentFloorIndex.value === 4) {
+            return
+        }            
+        nextFloor.push(elementToMove!);
+    } else if (floor.length === 5 && currentFloorIndex.value === 4) {
+        floor.splice(-1)
+    }
+
+    console.log(sceneData.value.shelves)
+    shelfLoading.value = false
+    
+    const { saveScene } = useIndexedDB();
+    await saveScene(createSerializableSceneData(sceneData.value));
+
 }
 
 // Initialize data with proper typing - use shallowRef for 3D objects
 const sceneData = shallowRef<SceneData | null>(null);
+const { loadScene } = useIndexedDB();
 
 // Run initialization on component mount
 onMounted(async () => {
     try {
-        sceneData.value = await initializeScene();
-        console.log(sceneData.value.shelves);
+        // First try to load the scene from IndexedDB
+        const savedData = await loadScene();
+
+        if (savedData) {
+            // If we have saved data, reconstruct the scene
+            sceneData.value = await reconstructSceneData(savedData);
+        } else {
+            // Otherwise initialize a new scene
+            sceneData.value = await initializeScene();
+        }
     } catch (error) {
         console.error("Error initializing scene:", error);
+        // Fallback to creating a new scene if loading fails
+        sceneData.value = await initializeScene();
     }
 });
 
@@ -334,9 +494,25 @@ watch(shelfNumber, () => {
         easing: 'easeInOutQuad',
         update: function () {
             // Update the actual position from our animation target object
-            position.set(animationTarget.x, animationTarget.y, animationTarget.z);
+            if (warehouseGroup.value) {
+                warehouseGroup.value.position.set(animationTarget.x, animationTarget.y, animationTarget.z);
+            }
         }
     });
+});
+
+// Save scene data when modal is closed
+watch(showModal, async () => {
+    if (!showModal.value && sceneData.value) {
+        const { saveScene } = useIndexedDB();
+        try {
+            // Create a serializable version of the scene data
+            const serializableData = createSerializableSceneData(sceneData.value);
+            await saveScene(serializableData);
+        } catch (error) {
+            console.error("Error saving scene data:", error);
+        }
+    }
 });
 </script>
 
@@ -386,17 +562,15 @@ watch(shelfNumber, () => {
         </TresGroup>
 
         <!-- Shelves -->
-        <primitive v-if="sceneData" v-for="(shelf, index) in sceneData.shelves" :key="`shelf-${index}`"
-            :object="shelf.model">
-            <TresGroup :position="[0, 1.78, 0]">
-                <primitive @click="addBox" @pointer-enter="cursorStyle = 'pinter'" @pointer-leave="cursorStyle = 'auto'"
-                    :rotation="[0, 1.64, 0]" :position="[boxPosition(index), 0, 0]" :scale="[1.5, 1.5, 1.5]"
-                    v-for="(box, index) in shelf.boxes[0]" :key="`box-0${index}`" :object="box.model" />
+        <primitive v-if="sceneData && !shelfLoading" v-for="(shelf, shelfIndex) in sceneData.shelves"
+            :key="`shelf-${shelfIndex}`" :object="shelf.model">
+            <TresGroup v-for="(floor, floorIndex) in shelf.boxes" :key="`floor-${shelfIndex}-${floorIndex}`"
+                :position="[0, ShelfFloorIndex(floorIndex)!, 0]">
+                <primitive @pointer-enter="cursorStyle = 'pointer'" @pointer-leave="cursorStyle = 'auto'"
+                    :rotation="[0, 1.64, 0]" :position="[boxPosition(boxIndex)!, 0, 0]" :scale="[1.5, 1.5, 1.5]"
+                    v-for="(box, boxIndex) in floor" :key="`box-${shelfIndex}-${floorIndex}-${boxIndex}`"
+                    :object="box.model" />
             </TresGroup>
-            <TresGroup></TresGroup>
-            <TresGroup></TresGroup>
-            <TresGroup></TresGroup>
-            <TresGroup></TresGroup>
         </primitive>
     </TresGroup>
 </template>

@@ -34,7 +34,7 @@ const loadModels = async (): Promise<Models> => {
     const shelves: Record<string, THREE.Object3D> = {};
     // load shelf models
     for (let i = 1; i <= 4; i++) {
-        const { scene } = await useGLTF('../../public/metal_shelf_-_5mb2.glb', { draco: true });
+        const { scene } = await useGLTF('./metal_shelf_-_5mb2.glb', { draco: true });
         shelves[`shelf${i}`] = scene.clone(); // Clone to ensure unique instances
     }
 
@@ -46,10 +46,10 @@ const loadModels = async (): Promise<Models> => {
 // Load textures
 const loadTextures = async () => {
     const [wall, floor, ceiling, beam] = await useTexture([
-        '../../public/empty-red-brick-wall.jpg',
-        '../../public/Floor_baseColor.jpg',
-        '../../public/Ceiling_baseColor.jpg',
-        '../../public/vecteezy_concrete-wall-texture_1819580.jpg'
+        './empty-red-brick-wall.jpg',
+        './Floor_baseColor.jpg',
+        './Ceiling_baseColor.jpg',
+        './vecteezy_concrete-wall-texture_1819580.jpg'
     ]);
 
     return { wall, floor, ceiling, beam };
@@ -149,7 +149,7 @@ const borderedBoxModel = async (box: THREE.Scene): Promise<THREE.Scene> => {
 const createInitialBoxesStructure = async (rows: number, shelfId: number): Promise<Box[][]> => {
     const boxes: Box[][] = [];
 
-    const { scene: box } = await useGLTF('../../public/beautiful_and_free_basic_cardboard_box_1m_size.glb', { draco: true });
+    const { scene: box } = await useGLTF('./beautiful_and_free_basic_cardboard_box_1m_size.glb', { draco: true });
 
     // Add interactive behavior to the "add box" placeholder and store unregister callback
     const boxIdentifier = shelfId.toString();
@@ -286,7 +286,7 @@ const reconstructSceneData = async (savedData: any): Promise<SceneData> => {
             if (!floorBoxes.length) return [];
 
             return Promise.all(floorBoxes.map(async (boxData) => {
-                const { scene: boxModel } = await useGLTF('../../public/beautiful_and_free_basic_cardboard_box_1m_size.glb', { draco: true });
+                const { scene: boxModel } = await useGLTF('./beautiful_and_free_basic_cardboard_box_1m_size.glb', { draco: true });
 
                 // Make the box interactive
                 if (boxData.isAddBox) {
@@ -441,7 +441,7 @@ const addBox = async (shelfIndex: number) => {
         return floorNumber
     })
 
-    const { scene: box } = await useGLTF('../../public/beautiful_and_free_basic_cardboard_box_1m_size.glb', { draco: true });
+    const { scene: box } = await useGLTF('./beautiful_and_free_basic_cardboard_box_1m_size.glb', { draco: true });
 
     const floor: Box[] = sceneData.value.shelves[shelfIndex].boxes[currentFloorIndex.value]
     const nextFloor: Box[] = sceneData.value.shelves[shelfIndex].boxes[currentFloorIndex.value + 1]

@@ -2,7 +2,7 @@ import * as THREE from "three"
 
 
 export interface Shelf {
-    model: THREE.Scene;
+    model: THREE.Object3D;
     positions: {
         x: number;
         y: number;

@@ -1,7 +1,10 @@
 <template>
     <div class="modal-backdrop" @click="$emit('close')">
         <div class="modal-content" @click.stop>
-            <h2>Todo Manager</h2>
+            <div class="header">
+                <h2>Todo Manager</h2>
+                <img @click="deleteBox" class="trash" src="../assets/trash-bin-trash-svgrepo-com.svg"/>
+            </div>
 
             <!-- Input form row -->
             <div class="input-row">
@@ -36,10 +39,11 @@ import { ref, defineEmits, computed } from 'vue';
 import selectedBox from '../stores/selectedBox';
 import type { BoxContent } from "../interfaces/types.ts"
 import showModal from '../stores/modalStatus.ts';
+import event from '../stores/deleteBox'
 
 const emit = defineEmits(['update:items', 'close']);
 
-const items = computed<BoxContent[]>(() => selectedBox.value!.content)
+const items = computed<BoxContent[]>(() => selectedBox.value!.box.content)
 const newName = ref('');
 const newCount = ref(0);
 
@@ -49,7 +53,7 @@ function handleAdd() {
             name: newName.value,
             count: newCount.value
         }];
-        selectedBox.value!.content = newItems
+        selectedBox.value!.box.content = newItems
         newName.value = '';
         newCount.value = 0;
     }
@@ -58,7 +62,7 @@ function handleAdd() {
 function handleDelete(index: number) {
     const newItems = [...items.value];
     newItems.splice(index, 1);
-    selectedBox.value!.content = newItems
+    selectedBox.value!.box.content = newItems
 }
 
 function updateName(index: number, event: Event) {
@@ -68,7 +72,7 @@ function updateName(index: number, event: Event) {
         ...newItems[index],
         name: target.value
     };
-    selectedBox.value!.content = newItems
+    selectedBox.value!.box.content = newItems
 }
 
 function updateCount(index: number, event: Event) {
@@ -78,7 +82,11 @@ function updateCount(index: number, event: Event) {
         ...newItems[index],
         count: parseInt(target.value) || 0
     };
-    selectedBox.value!.content = newItems
+    selectedBox.value!.box.content = newItems
+}
+
+const deleteBox = () => {
+  event.triggerChildOneAction(selectedBox.value!.id)
 }
 </script>
 
@@ -109,6 +117,18 @@ function updateCount(index: number, event: Event) {
 h2 {
     margin-top: 0;
     margin-bottom: 20px;
+}
+
+.header{
+    display: flex;
+    justify-content: space-between;
+}
+
+.trash{
+    width: 2rem;
+    height: 2rem;
+    cursor: pointer;
+    filter: invert(33%) sepia(58%) saturate(3424%) hue-rotate(336deg) brightness(99%) contrast(105%);
 }
 
 .input-row {

@@ -2,7 +2,7 @@
 import { useGLTF } from '@tresjs/cientos';
 import { useTexture, useTresContext } from '@tresjs/core';
 import * as THREE from 'three';
-import { onMounted, ref, watch, shallowRef, computed, ComputedRef } from 'vue';
+import { onMounted, ref, watch, shallowRef, computed, ComputedRef, onUnmounted } from 'vue';
 import type { Shelf, Box, BeamGeometry, Models, SceneData, WallGeometry } from '../interfaces/types';
 import { shelfNumber } from "../stores/shelfNumber";
 import cursorStyle from "../stores/cursorStyle";
@@ -11,6 +11,8 @@ import anime from 'animejs';
 import selectedBox from '../stores/selectedBox';
 import showModal from '../stores/modalStatus';
 import { useIndexedDB } from "../composables/useIndexedDB";
+import event from '../stores/deleteBox'
+
 
 // Room configuration
 const ROOM_CONFIG = {
@@ -149,9 +151,12 @@ const createInitialBoxesStructure = async (rows: number, shelfId: number): Promi
 
     const { scene: box } = await useGLTF('/beautiful_and_free_basic_cardboard_box_1m_size.glb', { draco: true });
 
-    makeModelInteractive(box, shelfId.toString(), (_, id) => {
+    // Add interactive behavior to the "add box" placeholder and store unregister callback
+    const boxIdentifier = shelfId.toString();
+    const unregister = makeModelInteractive(box, boxIdentifier, (_, id) => {
         addBox(+id);
     });
+    unregisterCallbacks.value.set(boxIdentifier, unregister);
 
     // First row with one box
     boxes.push([{ id: 0, content: [], model: await borderedBoxModel(box), isAddBox: true }]);
@@ -285,9 +290,27 @@ const reconstructSceneData = async (savedData: any): Promise<SceneData> => {
 
                 // Make the box interactive
                 if (boxData.isAddBox) {
-                    makeModelInteractive(boxModel, index.toString(), (_, id) => {
+                    const boxIdentifier = index.toString();
+                    const unregister = makeModelInteractive(boxModel, boxIdentifier, (_, id) => {
                         addBox(+id);
                     });
+                    unregisterCallbacks.value.set(boxIdentifier, unregister);
+
+                    // Set visibility based on whether it's in the last row and the row is full
+                    if (boxData.floorIndex === 4) {
+                        // Count regular boxes in this floor to determine if it's full
+                        const regularBoxCount = floorBoxes.filter(b => !b.isAddBox).length;
+                        const shouldBeVisible = regularBoxCount < 4;
+                        boxModel.visible = shouldBeVisible;
+
+                        // Only register the interactive handler if the placeholder should be visible
+                        if (!shouldBeVisible) {
+                            // If it's hidden, unregister the event handler
+                            unregisterCallbacks.value.delete(boxIdentifier);
+                            unregister(); // Call the unregister function we just created
+                        }
+                    }
+
                     return {
                         id: boxData.id,
                         content: boxData.content,
@@ -295,14 +318,30 @@ const reconstructSceneData = async (savedData: any): Promise<SceneData> => {
                         isAddBox: true
                     };
                 } else {
-                    makeModelInteractive(boxModel, `${index}-${boxData.floorIndex}-${boxData.id}`, (_, id) => {
+                    const boxIdentifier = `${index}-${boxData.floorIndex}-${boxData.id}`;
+                    const unregister = makeModelInteractive(boxModel, boxIdentifier, (_, id) => {
                         showModal.value = true;
-                        const [shelf, floor, box] = id.split('-').map(Number);
-                        selectedBox.value = sceneData.value?.shelves[shelf].boxes[floor][box];
+                        console.log("hello")
+                        const [shelf, floor, boxId] = id.split('-').map(Number);
+                        const box = sceneData.value?.shelves[shelf].boxes[floor].find(box => {
+                            console.log("Comparing:", box.id, boxId);
+                            return box.id === boxId;
+                        });
+                        console.log("sceneData.value?.shelves[shelf].boxes")
+                        if (box) {
+                            selectedBox.value = {
+                                id,
+                                box
+                            }
+                        } else {
+                            console.log("box not found")
+                        }
                     });
+                    unregisterCallbacks.value.set(boxIdentifier, unregister);
+
                     return {
                         id: boxData.id,
-                        content: boxData.content,
+                        content: boxData.content || [], // Ensure content is never undefined
                         model: boxModel
                     };
                 }
@@ -377,6 +416,9 @@ const boxPosition = computed(() => (index: number) => {
 
 const shelfLoading = ref<boolean>(false);
 
+// Add a Map to store the unregister functions for each box
+const unregisterCallbacks = ref(new Map<string, () => void>());
+
 const addBox = async (shelfIndex: number) => {
     shelfLoading.value = true
     if (!sceneData.value) return -1
@@ -389,7 +431,7 @@ const addBox = async (shelfIndex: number) => {
         sceneData.value.shelves[shelfIndex].boxes.some(floor => {
             if (floor.length) {
                 console.log(floor[floor.length - 1].isAddBox ? 4 : 5);
-                if (floor.length < 4 || floor[floor.length - 1].isAddBox ) {
+                if (floor.length < 4 || floor[floor.length - 1].isAddBox) {
                     return floorNumber
                 }
                 floorNumber++
@@ -404,43 +446,335 @@ const addBox = async (shelfIndex: number) => {
     const floor: Box[] = sceneData.value.shelves[shelfIndex].boxes[currentFloorIndex.value]
     const nextFloor: Box[] = sceneData.value.shelves[shelfIndex].boxes[currentFloorIndex.value + 1]
 
-    const currentBoxId: number = floor.length
-    
-    floor.unshift({
+    console.log(floor[0].id)
+    const currentBoxId: number = Date.now()
+
+    // Find and remove the "add box" placeholder if it exists
+    let placeholderBoxIndex = -1;
+    let placeholderBox: Box | null = null;
+
+    for (let i = 0; i < floor.length; i++) {
+        if (floor[i].isAddBox) {
+            placeholderBoxIndex = i;
+            placeholderBox = floor[i];
+            break;
+        }
+    }
+
+    if (placeholderBoxIndex !== -1) {
+        // Remove the placeholder from the current floor
+        floor.splice(placeholderBoxIndex, 1);
+    }
+
+    // Add the new box to the end of the floor
+    floor.push({
         id: currentBoxId,
         model: box,
         content: []
-    })
+    });
 
-    makeModelInteractive(box, `${shelfIndex}-${currentFloorIndex.value}-${currentBoxId}`, (_, id) => {
+    // Store the unregister callback with the box's unique identifier
+    const boxIdentifier = `${shelfIndex}-${currentFloorIndex.value}-${currentBoxId}`;
+    const unregister = makeModelInteractive(box, boxIdentifier, (_, id) => {
         showModal.value = true
-        const shelf: number = +id[0]
-        const floor: number = +id[2]
-        const box: number = +id[4]
-        console.log(sceneData.value?.shelves[shelf].boxes[floor][box]);
-        selectedBox.value = sceneData.value?.shelves[shelf].boxes[floor][box]
-    })
+        const [shelf, floor, boxId] = id.split('-').map(Number);
+        const box = sceneData.value?.shelves[shelf].boxes[floor].find(box => {
+            console.log("Comparing:", box.id, boxId);
+            console.log(box.id === boxId);
+            return box.id === boxId;
+        });
 
-    console.log(currentFloorIndex.value)
+        if (box) {
+            selectedBox.value = {
+                id,
+                box
+            }
+        } else {
+            console.log("box not found")
+        }
+    });
 
-    if (floor.length === 5 && currentFloorIndex.value !== 4 ) {
+    unregisterCallbacks.value.set(boxIdentifier, unregister);
 
-        const elementToMove = floor.pop()
+    // Check if the current floor is now full (4 regular boxes) and not the last floor
+    if (floor.length === 4 && currentFloorIndex.value < 4) {
+        // Move the placeholder to the next floor if it's not already there
+        if (placeholderBox) {
+            // Create a new interactive handler for the placeholder with the new floor
+            const newPlaceholderIdentifier = shelfIndex.toString();
+            const placeholderUnregister = unregisterCallbacks.value.get(shelfIndex.toString());
+            if (placeholderUnregister) {
+                placeholderUnregister();
+                unregisterCallbacks.value.delete(shelfIndex.toString());
+            }
 
-        if (currentFloorIndex.value === 4) {
-            return
-        }            
-        nextFloor.push(elementToMove!);
-    } else if (floor.length === 5 && currentFloorIndex.value === 4) {
-        floor.splice(-1)
+            const newUnregister = makeModelInteractive(placeholderBox.model, newPlaceholderIdentifier, (_, id) => {
+                addBox(+id);
+            });
+            unregisterCallbacks.value.set(newPlaceholderIdentifier, newUnregister);
+
+            // Add the placeholder to the beginning of the next floor
+            nextFloor.push(placeholderBox);
+        }
+    } else if (currentFloorIndex.value < 4 && placeholderBox) {
+        // If the floor is not full, add the placeholder back at the end
+        floor.push(placeholderBox);
+    } else if (currentFloorIndex.value === 4) {
+        if (floor.length < 4 && placeholderBox) {
+            // Last row has space - show the placeholder
+            // Make sure the placeholder is visible
+            placeholderBox.model.visible = true;
+
+            // Ensure the placeholder's click event is active
+            const newPlaceholderIdentifier = shelfIndex.toString();
+            const placeholderUnregister = unregisterCallbacks.value.get(shelfIndex.toString());
+            if (placeholderUnregister) {
+                placeholderUnregister();
+                unregisterCallbacks.value.delete(shelfIndex.toString());
+            }
+
+            const newUnregister = makeModelInteractive(placeholderBox.model, newPlaceholderIdentifier, (_, id) => {
+                addBox(+id);
+            });
+            unregisterCallbacks.value.set(newPlaceholderIdentifier, newUnregister);
+
+            floor.push(placeholderBox);
+        } else if (floor.length >= 4 && placeholderBox) {
+            // Last row is full - hide the placeholder but keep it in the data structure
+            placeholderBox.model.visible = false;
+
+            // Disable the placeholder's click event when hidden
+            const placeholderUnregister = unregisterCallbacks.value.get(shelfIndex.toString());
+            if (placeholderUnregister) {
+                placeholderUnregister();
+                unregisterCallbacks.value.delete(shelfIndex.toString());
+            }
+
+            floor.push(placeholderBox);
+        } else if (floor.length === 5) {
+            // For the last row, if it's full, remove the oldest box
+            floor.shift();
+        }
     }
 
     console.log(sceneData.value.shelves)
     shelfLoading.value = false
-    
+
     const { saveScene } = useIndexedDB();
     await saveScene(createSerializableSceneData(sceneData.value));
+}
 
+function removeAndShift<T>(array: Array<Array<T>>, row: number, col: number): Array<Array<T>> {
+    // Get the dimensions of the original array
+    const numRows: number = array.length;
+    const rowLengths: number[] = array.map(row => row.length);
+    const totalElements: number = rowLengths.reduce((sum, length) => sum + length, 0);
+
+    // Step 1: Flatten the array
+    const flattened: T[] = [];
+    for (let i = 0; i < array.length; i++) {
+        for (let j = 0; j < array[i].length; j++) {
+            flattened.push(array[i][j]);
+        }
+    }
+
+    // Step 2: Find the index of the element to remove in the flattened array
+    let flatIndex: number = 0;
+    for (let i = 0; i < row; i++) {
+        flatIndex += array[i].length;
+    }
+    flatIndex += col;
+
+    // Step 3: Remove the element
+    flattened.splice(flatIndex, 1);
+
+    // Step 4: Reconstruct the array with the same dimensions
+    const result: Array<Array<T>> = [];
+    let currentIndex: number = 0;
+
+    for (let i = 0; i < numRows; i++) {
+        const newRow: T[] = [];
+        // If this is the last row, add all remaining elements
+        if (i === numRows - 1) {
+            while (currentIndex < flattened.length) {
+                newRow.push(flattened[currentIndex]);
+                currentIndex++;
+            }
+        } else {
+            // Otherwise, add the same number of elements as in the original row
+            for (let j = 0; j < rowLengths[i]; j++) {
+                // If we've reached the end of the flattened array, break
+                if (currentIndex >= flattened.length) break;
+                newRow.push(flattened[currentIndex]);
+                currentIndex++;
+            }
+        }
+        result.push(newRow);
+    }
+
+    return result;
+}
+
+// delete box
+const deleteBox = async (data: string) => {
+    shelfLoading.value = true
+
+    const [shelf, floor, boxId] = data.split('-').map(Number);
+    console.log(sceneData.value?.shelves[shelf].boxes);
+    // find box index and remove it
+    const boxIndex = sceneData.value?.shelves[shelf].boxes[floor].findIndex(box => box.id === boxId);
+    console.log("Found box at index:", boxIndex);
+
+    if (sceneData.value && boxIndex !== undefined && boxIndex !== -1) {
+        try {
+            // First, get a reference to the box's 3D model to dispose it properly
+            const boxToDelete = sceneData.value.shelves[shelf].boxes[floor][boxIndex];
+
+            // Dispose of the 3D model resources
+            if (boxToDelete && boxToDelete.model) {
+                const model = boxToDelete.model;
+
+                // Remove the model from its parent in the scene
+                if (model.parent) {
+                    model.parent.remove(model);
+                }
+
+                // Dispose of any materials, geometries, and textures in the model
+                model.traverse((object) => {
+                    if (object instanceof THREE.Mesh) {
+                        if (object.geometry) {
+                            object.geometry.dispose();
+                        }
+
+                        if (object.material) {
+                            // Handle array of materials
+                            if (Array.isArray(object.material)) {
+                                object.material.forEach(material => {
+                                    disposeMaterial(material);
+                                });
+                            } else {
+                                // Handle single material
+                                disposeMaterial(object.material);
+                            }
+                        }
+                    }
+                });
+            }
+
+            // Helper function to dispose material and its textures
+            function disposeMaterial(material: THREE.Material): void {
+                // Dispose textures
+                Object.keys(material).forEach(prop => {
+                    const value = (material as any)[prop];
+                    if (value instanceof THREE.Texture) {
+                        value.dispose();
+                    }
+                });
+
+                material.dispose();
+            }
+
+            // First, unregister the interactive event for the box being deleted
+            const boxIdentifier = `${shelf}-${floor}-${boxId}`;
+            if (unregisterCallbacks.value.has(boxIdentifier)) {
+                const unregister = unregisterCallbacks.value.get(boxIdentifier);
+                if (unregister) unregister();
+                unregisterCallbacks.value.delete(boxIdentifier);
+            }
+
+            // Now remove the box from the data structure
+            sceneData.value.shelves[shelf].boxes = removeAndShift<Box>(sceneData.value.shelves[shelf].boxes!, floor, boxIndex);
+
+            // Rebuild all interactive handlers for remaining boxes in the affected shelf
+            // Unregister existing callbacks for this shelf
+            const shelfPrefix = `${shelf}-`;
+            for (const [key, unregister] of Array.from(unregisterCallbacks.value.entries())) {
+                if (key.startsWith(shelfPrefix)) {
+                    unregister();
+                    unregisterCallbacks.value.delete(key);
+                }
+            }
+
+            // Re-register callbacks for all boxes in this shelf
+            sceneData.value.shelves[shelf].boxes.forEach((floorBoxes, floorIndex) => {
+                floorBoxes.forEach(box => {
+                    // Check if this is the "add box" placeholder on the last row
+                    if (floorIndex === 4 && box.isAddBox) {
+                        // Make the placeholder visible again if there's space in the last row
+                        if (floorBoxes.length <= 4) {
+                            box.model.visible = true;
+
+                            // Re-enable the placeholder's click event when visible
+                            const placeholderId = shelf.toString();
+                            const newUnregister = makeModelInteractive(box.model, placeholderId, (_, id) => {
+                                addBox(+id);
+                            });
+                            unregisterCallbacks.value.set(placeholderId, newUnregister);
+                        } else {
+                            box.model.visible = false;
+
+                            // Disable the placeholder's click event when hidden
+                            const placeholderId = shelf.toString();
+                            if (unregisterCallbacks.value.has(placeholderId)) {
+                                const unregister = unregisterCallbacks.value.get(placeholderId);
+                                if (unregister) unregister();
+                                unregisterCallbacks.value.delete(placeholderId);
+                            }
+                        }
+
+                        // Skip adding a regular interactive handler for the placeholder
+                        // since we've handled it specially above
+                        return;
+                    }
+
+                    const newIdentifier = `${shelf}-${floorIndex}-${box.id}`;
+                    const unregister = makeModelInteractive(box.model, newIdentifier, (_, id) => {
+                        showModal.value = true;
+                        const [s, f, bId] = id.split('-').map(Number);
+                        const foundBox = sceneData.value?.shelves[s].boxes[f].find(b => b.id === bId);
+
+                        if (foundBox) {
+                            selectedBox.value = {
+                                id,
+                                box: foundBox
+                            };
+                        } else {
+                            console.log("box not found");
+                        }
+                    });
+                    unregisterCallbacks.value.set(newIdentifier, unregister);
+                });
+            });
+
+            // Force a re-render by creating a new shallow copy of the affected shelf's boxes
+            // This ensures Vue detects the change and updates the DOM
+            sceneData.value = {
+                ...sceneData.value,
+                shelves: sceneData.value.shelves.map((s, i) => {
+                    if (i === shelf) {
+                        return {
+                            ...s,
+                            boxes: [...s.boxes] // create a new array reference
+                        };
+                    }
+                    return s;
+                })
+            };
+
+            // Give the DOM a chance to update
+            await new Promise(resolve => setTimeout(resolve, 10));
+
+            console.log(sceneData.value.shelves[shelf].boxes)
+            const { saveScene } = useIndexedDB();
+            await saveScene(createSerializableSceneData(sceneData.value));
+        } finally {
+            shelfLoading.value = false
+            showModal.value = false
+        }
+    } else {
+        console.log("Box not found for deletion, ID:", boxId);
+        shelfLoading.value = false;
+    }
 }
 
 // Initialize data with proper typing - use shallowRef for 3D objects
@@ -450,6 +784,9 @@ const { loadScene } = useIndexedDB();
 // Run initialization on component mount
 onMounted(async () => {
     try {
+        // set delete method
+        event.deleteHandler = deleteBox
+
         // First try to load the scene from IndexedDB
         const savedData = await loadScene();
 
@@ -465,6 +802,16 @@ onMounted(async () => {
         // Fallback to creating a new scene if loading fails
         sceneData.value = await initializeScene();
     }
+});
+
+// Clean up all interactive handlers when component is unmounted
+onUnmounted(() => {
+    // Call all unregister functions
+    for (const unregister of unregisterCallbacks.value.values()) {
+        unregister();
+    }
+    // Clear the map
+    unregisterCallbacks.value.clear();
 });
 
 // Watch for shelf number changes

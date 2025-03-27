@@ -7,12 +7,6 @@ const sliderPosition = ref<number>()
 const prevSliderPosition = ref<number>()
 const isDragging = ref<boolean>()
 const firstY = ref<number>()
-const limits = {
-  max: 155,
-  min: -155
-}
-
-const limitsDifference = ref<number>(Math.abs(limits.max - limits.min))
 
 function updateSliderPosition(clientY: number) {
   if (!container.value) return;
@@ -47,20 +41,6 @@ watch(sliderPosition, (newPosition, oldPosition) => {
   prevSliderPosition.value = oldPosition || control.value.offsetTop;
 })
 
-function transformRoom() {
-  if (!container.value) return;
-
-  const containerRect = container.value.getBoundingClientRect();
-
-  const halfHeight = containerRect.height / 2;
-
-  if (sliderPosition.value! - prevSliderPosition.value! > 0) {
-    y.value = Math.abs(limits.min) + (sliderPosition.value! - halfHeight) / halfHeight * limitsDifference.value;
-  } else {
-    y.value = Math.abs(limits.min) - (halfHeight - sliderPosition.value!) / halfHeight * limitsDifference.value;
-  }
-}
-
 function handleSliderMouseDown(event: MouseEvent) {
   isDragging.value = true;
   firstY.value = event.clientY;
@@ -75,7 +55,6 @@ function handleSliderMove(event: MouseEvent | TouchEvent) {
     : event.clientY;
 
   updateSliderPosition(clientY);
-  transformRoom()
 }
 
 function handleSliderEnd() {

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
-import { x, y } from "../stores/position"
 
 const container = ref<HTMLDivElement>()
 const control = ref<HTMLDivElement>()

@@ -1,22 +1,16 @@
 <script setup lang="ts">
 import { TresCanvas } from '@tresjs/core';
-import { OrbitControls } from '@tresjs/cientos';
 import {
   SRGBColorSpace,
   NoToneMapping,
-  TextureLoader,
-  RepeatWrapping,
-  LinearFilter,
   PCFSoftShadowMap,
 } from 'three';
-import { onMounted, ref } from 'vue';
+import { ref } from 'vue';
 import Room from './components/Room.vue';
 import SwichSide from './components/SwichSide.vue';
 import cursorStyle from "./stores/cursorStyle"
 import Modal from "./components/Modal.vue"
 import showModal from "./stores/modalStatus"
-
-const texture = ref();
 
 const gl = {
   shadows: true,

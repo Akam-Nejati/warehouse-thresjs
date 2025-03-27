@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { useGLTF } from '@tresjs/cientos';
-import { useTexture, useTresContext } from '@tresjs/core';
+import { useTexture } from '@tresjs/core';
 import * as THREE from 'three';
-import { onMounted, ref, watch, shallowRef, computed, ComputedRef, onUnmounted } from 'vue';
+import { onMounted, ref, watch, shallowRef, computed, onUnmounted } from 'vue';
 import type { Shelf, Box, BeamGeometry, Models, SceneData, WallGeometry } from '../interfaces/types';
 import { shelfNumber } from "../stores/shelfNumber";
 import cursorStyle from "../stores/cursorStyle";
@@ -568,7 +568,7 @@ function removeAndShift<T>(array: Array<Array<T>>, row: number, col: number): Ar
     // Get the dimensions of the original array
     const numRows: number = array.length;
     const rowLengths: number[] = array.map(row => row.length);
-    const totalElements: number = rowLengths.reduce((sum, length) => sum + length, 0);
+    // const totalElements: number = rowLengths.reduce((sum, length) => sum + length, 0);
 
     // Step 1: Flatten the array
     const flattened: T[] = [];

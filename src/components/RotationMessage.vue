@@ -26,8 +26,13 @@ import { ref, onMounted } from 'vue';
 const showMessage = ref(false);
 
 onMounted(() => {
-    checkDeviceOrientation();
-    window.addEventListener('resize', checkDeviceOrientation);
+    // Check if user has previously closed the rotation message
+    const hasClosedBefore = localStorage.getItem('rotationMessageClosed') === 'true';
+
+    if (!hasClosedBefore) {
+        checkDeviceOrientation();
+        window.addEventListener('resize', checkDeviceOrientation);
+    }
 });
 
 const checkDeviceOrientation = () => {
@@ -36,11 +41,7 @@ const checkDeviceOrientation = () => {
 
     if (isMobile) {
         // Check if the device is in portrait mode
-        if (window.innerHeight > window.innerWidth) {
-            showMessage.value = true;
-        } else {
-            showMessage.value = false;
-        }
+        showMessage.value = window.innerHeight > window.innerWidth;
     } else {
         showMessage.value = false;
     }

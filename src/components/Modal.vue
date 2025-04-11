@@ -148,26 +148,6 @@ function handleDelete(index: number) {
     selectedBox.value!.box.content = newItems
 }
 
-function updateName(index: number, event: Event) {
-    const target = event.target as HTMLInputElement;
-    const newItems = [...items.value];
-    newItems[index] = {
-        ...newItems[index],
-        name: target.value
-    };
-    selectedBox.value!.box.content = newItems
-}
-
-function updateCount(index: number, event: Event) {
-    const target = event.target as HTMLInputElement;
-    const newItems = [...items.value];
-    newItems[index] = {
-        ...newItems[index],
-        count: parseInt(target.value) || 0
-    };
-    selectedBox.value!.box.content = newItems
-}
-
 const deleteBox = () => {
     if (selectedBox.value) {
         event.triggerChildOneAction(selectedBox.value.id);

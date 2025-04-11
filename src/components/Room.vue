@@ -2,7 +2,7 @@
 import { useGLTF } from '@tresjs/cientos';
 import { useTexture } from '@tresjs/core';
 import * as THREE from 'three';
-import { onMounted, ref, watch, shallowRef, computed, onUnmounted } from 'vue';
+import { onMounted, ref, watch, shallowRef, computed, onUnmounted, inject } from 'vue';
 import type { Shelf, Box, BeamGeometry, Models, SceneData, WallGeometry } from '../interfaces/types';
 import { shelfNumber } from "../stores/shelfNumber";
 import cursorStyle from "../stores/cursorStyle";
@@ -13,6 +13,14 @@ import showModal from '../stores/modalStatus';
 import { useIndexedDB } from "../composables/useIndexedDB";
 import event from '../stores/deleteBox'
 
+// Inject the loader state from parent (App.vue)
+const loaderState = inject<{
+    value: {
+        progress: number;
+        isComplete: boolean;
+        statusText: string;
+    }
+}>('loaderState');
 
 // Room configuration
 const ROOM_CONFIG = {
@@ -29,29 +37,42 @@ defineExpose({
 // Scene refs - Use shallowRef for Three.js objects to prevent deep reactivity
 const warehouseGroup = shallowRef<THREE.Group | null>(null);
 
-// Load models
+// Utility function to update loading progress
+const updateLoadingProgress = (value: number, status?: string) => {
+    if (loaderState) {
+        loaderState.value.progress = value;
+        if (status) {
+            loaderState.value.statusText = status;
+        }
+    }
+};
+
+// Load models with progress tracking
 const loadModels = async (): Promise<Models> => {
+    updateLoadingProgress(10, 'Loading shelf models...');
     const shelves: Record<string, THREE.Object3D> = {};
     // load shelf models
     for (let i = 1; i <= 4; i++) {
+        updateLoadingProgress(10 + (i * 10), `Loading shelf ${i}/4...`);
         const { scene } = await useGLTF('./metal_shelf_-_5mb2.glb', { draco: true });
         shelves[`shelf${i}`] = scene.clone(); // Clone to ensure unique instances
     }
-
+    updateLoadingProgress(50, 'Shelf models loaded');
     return {
         shelves,
     };
 };
 
-// Load textures
+// Load textures with progress tracking
 const loadTextures = async () => {
+    updateLoadingProgress(50, 'Loading textures...');
     const [wall, floor, ceiling, beam] = await useTexture([
         './empty-red-brick-wall.jpg',
         './Floor_baseColor.jpg',
         './Ceiling_baseColor.jpg',
         './vecteezy_concrete-wall-texture_1819580.jpg'
     ]);
-
+    updateLoadingProgress(70, 'Textures loaded');
     return { wall, floor, ceiling, beam };
 };
 
@@ -419,8 +440,12 @@ const shelfLoading = ref<boolean>(false);
 // Add a Map to store the unregister functions for each box
 const unregisterCallbacks = ref(new Map<string, () => void>());
 
+// Update the loading state for add/remove box operations
 const addBox = async (shelfIndex: number) => {
-    shelfLoading.value = true
+    shelfLoading.value = true;
+    updateLoadingProgress(50, 'Adding box...');
+    if (loaderState) loaderState.value.isComplete = false;
+
     if (!sceneData.value) return -1
 
     const currentFloorIndex = computed((): number => {
@@ -558,7 +583,8 @@ const addBox = async (shelfIndex: number) => {
     }
 
     console.log(sceneData.value.shelves)
-    shelfLoading.value = false
+    shelfLoading.value = false;
+    if (loaderState) loaderState.value.isComplete = true;
 
     const { saveScene } = useIndexedDB();
     await saveScene(createSerializableSceneData(sceneData.value));
@@ -617,7 +643,9 @@ function removeAndShift<T>(array: Array<Array<T>>, row: number, col: number): Ar
 
 // delete box
 const deleteBox = async (data: string) => {
-    shelfLoading.value = true
+    shelfLoading.value = true;
+    updateLoadingProgress(50, 'Removing box...');
+    if (loaderState) loaderState.value.isComplete = false;
 
     const [shelf, floor, boxId] = data.split('-').map(Number);
     console.log(sceneData.value?.shelves[shelf].boxes);
@@ -768,12 +796,14 @@ const deleteBox = async (data: string) => {
             const { saveScene } = useIndexedDB();
             await saveScene(createSerializableSceneData(sceneData.value));
         } finally {
-            shelfLoading.value = false
-            showModal.value = false
+            shelfLoading.value = false;
+            if (loaderState) loaderState.value.isComplete = true;
+            showModal.value = false;
         }
     } else {
         console.log("Box not found for deletion, ID:", boxId);
         shelfLoading.value = false;
+        if (loaderState) loaderState.value.isComplete = true;
     }
 }
 
@@ -785,22 +815,38 @@ const { loadScene } = useIndexedDB();
 onMounted(async () => {
     try {
         // set delete method
-        event.deleteHandler = deleteBox
+        event.deleteHandler = deleteBox;
+
+        updateLoadingProgress(0, 'Starting initialization...');
+        if (loaderState) loaderState.value.isComplete = false;
 
         // First try to load the scene from IndexedDB
+        updateLoadingProgress(5, 'Checking saved data...');
         const savedData = await loadScene();
 
         if (savedData) {
             // If we have saved data, reconstruct the scene
+            updateLoadingProgress(10, 'Reconstructing saved scene...');
             sceneData.value = await reconstructSceneData(savedData);
         } else {
             // Otherwise initialize a new scene
+            updateLoadingProgress(10, 'Creating new scene...');
             sceneData.value = await initializeScene();
         }
+
+        // Final setup
+        updateLoadingProgress(90, 'Finalizing setup...');
+        setTimeout(() => {
+            updateLoadingProgress(100, 'Ready!');
+            if (loaderState) loaderState.value.isComplete = true;
+        }, 500);
     } catch (error) {
         console.error("Error initializing scene:", error);
         // Fallback to creating a new scene if loading fails
+        updateLoadingProgress(10, 'Error loading saved data, creating new scene...');
         sceneData.value = await initializeScene();
+        updateLoadingProgress(100, 'Ready!');
+        if (loaderState) loaderState.value.isComplete = true;
     }
 });
 
@@ -864,6 +910,7 @@ watch(showModal, async () => {
 </script>
 
 <template>
+    <!-- TresJS components - no wrapper needed since App.vue already has TresCanvas -->
     <TresGroup ref="warehouseGroup" :position="[-10, 0, 0]">
         <!-- Room Structure -->
         <TresGroup>
